@@ -1,8 +1,8 @@
 export const ROLES = ['EMPLOYEE', 'ANALYST'] as const;
 export type Role = (typeof ROLES)[number];
 
-/** AWAITING = transferida, aguardando atendente. ANALYST = analista atendendo (agent pausado). */
-export const CONVERSATION_STATUSES = ['AGENT', 'AWAITING', 'ANALYST', 'CLOSED'] as const;
+/** AWAITING = transferida, aguardando atendente. ANALYST = analista atendendo (agent pausado). RESOLVED = resolvida pelo agent. */
+export const CONVERSATION_STATUSES = ['AGENT', 'AWAITING', 'ANALYST', 'CLOSED', 'RESOLVED'] as const;
 export type ConversationStatus = (typeof CONVERSATION_STATUSES)[number];
 
 export const TICKET_TYPES = ['INC', 'REQ'] as const;
@@ -26,7 +26,7 @@ export const STATUS_LABEL: Record<TicketStatus, string> = {
   OPEN: 'Aberto', IN_PROGRESS: 'Em andamento', PENDING: 'Pendente', ANALYST: 'Aguardando analista', APPROVED: 'Aprovado', RESOLVED: 'Resolvido',
 };
 export const CONVERSATION_STATUS_LABEL: Record<ConversationStatus, string> = {
-  AGENT: 'Agent atendendo', AWAITING: 'Aguardando atendente', ANALYST: 'Analista atendendo', CLOSED: 'Encerrada',
+  AGENT: 'Agent atendendo', AWAITING: 'Aguardando atendente', ANALYST: 'Analista atendendo', CLOSED: 'Encerrada', RESOLVED: 'Resolvida pelo agent',
 };
 export const HANDOFF_REASON_LABEL = {
   user_request: 'Funcionário pediu um analista', critical: 'Caso crítico', overdue: 'Chamado vencido', low_confidence: 'Agent sem segurança para decidir',

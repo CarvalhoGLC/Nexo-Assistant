@@ -42,7 +42,7 @@ export const addMessage = (conversationId: string, m: NewMessage) =>
     },
   });
 
-const ETA = { N1: 'até 4 h úteis', N2: 'até 2 h úteis' } as const;
+const ETA = { N1: 'até 4 h úteis', N2: 'até 2 h úteis' } as const; // ver ANALYST_ETA_HOURS em lib/sla.ts
 
 /** Transfere a conversa: fica "aguardando atendente" e o agent pára de responder (a rota de chat checa o status). */
 export async function handoffToAnalyst(
@@ -86,7 +86,10 @@ export async function analystReply(conversationId: string, analyst: { id: string
 }
 
 export async function analystReturn(conversationId: string, analyst: { id: string; name: string }) {
-  await mine(conversationId, analyst.id, 'ANALYST');
+  // Pode devolver ao agent uma conversa que aguarda atendente (sem assumir) ou uma que está com o próprio analista.
+  const c = await db.conversation.findUnique({ where: { id: conversationId } });
+  if (!c) throw new ConversationError('Conversa não encontrada');
+  if (c.status !== 'AWAITING') await mine(conversationId, analyst.id, 'ANALYST');
   await db.conversation.update({ where: { id: conversationId }, data: { status: 'AGENT', assignedAnalystId: null, handoffReason: null, handoffSummary: null, handoffLevel: null, handoffConfidence: null, handoffTicket: null, handoffAt: null } });
   await addMessage(conversationId, { sender: 'SYSTEM', text: `${analyst.name} devolveu a conversa ao Nexo Assist` });
 }

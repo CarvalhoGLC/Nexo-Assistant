@@ -49,7 +49,7 @@ export async function POST(req: Request) {
     if (session.messageCount >= max) throw new HttpError(429, `Limite de ${max} mensagens por sessão atingido. Saia e entre de novo para continuar.`);
 
     let conv = await conversationForUser(user.id);
-    if (conv.status === 'CLOSED') conv = await db.conversation.update({ where: { id: conv.id }, data: { status: 'AGENT' } });
+    if (conv.status === 'CLOSED' || conv.status === 'RESOLVED') conv = await db.conversation.update({ where: { id: conv.id }, data: { status: 'AGENT' } });
 
     const turnStart = new Date();
     await addMessage(conv.id, { sender: 'USER', text, createdAt: turnStart });

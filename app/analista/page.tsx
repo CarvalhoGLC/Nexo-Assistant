@@ -1,41 +1,53 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { DecisionSteps } from '@/components/DecisionSteps';
+import { LogoMark } from '@/components/AppShell';
 import { DraftCard } from '@/components/DraftCard';
-import { TicketCardView } from '@/components/TicketCardView';
-import { ago, fmtDateTime, fmtTime, priorityLabel, statusLabel } from '@/lib/format';
+import { IconBot, IconChat, IconChevron, IconClose, IconHand, IconHeadset, IconLogout, IconPanel, IconSearch, IconSend, IconSwap } from '@/components/Icons';
+import { MessageHead } from '@/components/MessageHead';
+import { statusTone, TicketCardView } from '@/components/TicketCardView';
+import { avatarTone, fmtDay, fmtTime, initials, priorityLabel, sameDayLabel, statusLabel } from '@/lib/format';
 import { CONVERSATION_STATUS_LABEL, HANDOFF_REASON_LABEL, type ConversationStatus, type HandoffReason, type MessageDTO, type TicketCard } from '@/lib/types';
+import s from './console.module.css';
 
 type Filter = 'all' | 'needs' | 'agent' | 'mine';
 type Item = {
-  id: string; status: ConversationStatus; updatedAt: string; user: { id: string; name: string; department: string };
+  id: string; status: ConversationStatus; updatedAt: string; user: { id: string; name: string; department: string }; unread: number;
   lastMessage: { text: string; sender: string; createdAt: string } | null;
-  handoff: { reason: HandoffReason; level: string | null; confidence: number | null; ticket: string | null } | null;
+  handoff: { reason: HandoffReason; level: string | null; confidence: number | null; ticket: string | null; respondBy: string | null } | null;
 };
 type List = { counts: Record<Filter, number>; items: Item[] };
 type Detail = {
   conversation: {
     id: string; status: ConversationStatus; assignedAnalyst: { id: string; name: string } | null;
-    handoff: { reason: HandoffReason; summary: string | null; level: string | null; confidence: number | null; ticket: string | null; at?: string } | null;
+    handoff: { reason: HandoffReason; summary: string | null; level: string | null; confidence: number | null; ticket: string | null; at?: string; respondBy: string | null } | null;
   };
   user: { id: string; name: string; email: string; department: string };
   messages: MessageDTO[]; tickets: TicketCard[]; counts: { open: number; closed: number };
 };
 type Me = { id: string; name: string; role: string };
+type Tone = 'red' | 'amber' | 'green' | 'gray' | 'blue';
 
 const TABS: { key: Filter; label: string }[] = [
   { key: 'all', label: 'Todas' }, { key: 'needs', label: 'Para você' }, { key: 'agent', label: 'Com o agent' }, { key: 'mine', label: 'Minhas' },
 ];
+const DOT: Record<string, string> = { amber: '#f5a524', blue: '#0a62c9', green: '#2bb673', gray: '#9aa5b4' };
 
-const initials = (n: string) => n.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase();
+function tagFor(i: Item, meId?: string): { text: string; tone: Tone } {
+  if (i.status === 'AGENT') return { text: 'Agent atendendo', tone: 'green' };
+  if (i.status === 'RESOLVED') return { text: 'Resolvida pelo agent', tone: 'gray' };
+  if (i.status === 'CLOSED') return { text: 'Encerrada', tone: 'gray' };
+  if (i.status === 'ANALYST') return { text: meId ? 'Você está atendendo' : 'Analista atendendo', tone: 'blue' };
+  if (i.handoff?.reason === 'low_confidence') return { text: `Agent pediu ajuda · confiança ${Math.round((i.handoff.confidence ?? 0) * 100)}%`, tone: 'amber' };
+  const mins = i.handoff?.respondBy ? Math.round((new Date(i.handoff.respondBy).getTime() - Date.now()) / 60000) : null;
+  if (mins !== null && mins <= 0) return { text: 'Transferida · prazo de resposta vencido', tone: 'red' };
+  if (mins !== null && mins <= 90) return { text: `Transferida · contato em ${mins} min`, tone: 'red' };
+  return { text: `Transferida${i.handoff?.ticket ? ` · ${i.handoff.ticket}` : ''}`, tone: 'red' };
+}
 
-function tagFor(i: Item): { text: string; cls: string } | null {
-  if (i.status === 'AGENT') return { text: 'Agent atendendo', cls: 'ok' };
-  if (i.status === 'CLOSED') return { text: 'Encerrada', cls: '' };
-  if (i.status === 'ANALYST') return { text: 'Analista atendendo', cls: 'ok' };
-  if (i.handoff?.reason === 'low_confidence') return { text: `Agent pediu ajuda · confiança ${Math.round((i.handoff.confidence ?? 0) * 100)}%`, cls: 'low' };
-  return { text: `Transferida${i.handoff?.ticket ? ` · ${i.handoff.ticket}` : ''}`, cls: '' };
+function Avatar({ name, online, small }: { name: string; online?: boolean; small?: boolean }) {
+  const t = avatarTone(name);
+  return <span className={`${s.avatar} ${small ? '' : s.sm}`} style={{ background: t.bg, color: t.fg }}>{initials(name)}{online && <i className={s.online} />}</span>;
 }
 
 export default function Analista() {
@@ -48,6 +60,7 @@ export default function Analista() {
   const [text, setText] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [panel, setPanel] = useState(true);
 
   const loadList = useCallback(async () => {
     const r = await fetch(`/api/conversations?filter=${filter}&q=${encodeURIComponent(q)}`);
@@ -99,112 +112,155 @@ export default function Analista() {
   const mine = !!c && c.status === 'ANALYST' && c.assignedAnalyst?.id === me?.id;
   const canTake = !!c && (c.status === 'AWAITING' || c.status === 'AGENT');
   const takenByOther = !!c && c.status === 'ANALYST' && !mine;
+  const firstName = detail?.user.name.split(' ')[0] ?? '';
+  const online = !!detail && Date.now() - new Date(detail.messages[detail.messages.length - 1]?.createdAt ?? 0).getTime() < 15 * 60_000;
+  const handoffTicket = c?.handoff?.ticket ?? null;
+  const takenAt = detail?.messages.filter((m) => m.sender === 'SYSTEM' && m.text.includes('assumiu')).pop()?.createdAt;
 
   return (
-    <div className="console">
-      <aside>
-        <div className="brand"><span className="mark">N</span><b>Nexo Assist</b></div>
-        <div className="user" style={{ margin: '14px 4px' }}><span>{me ? initials(me.name) : '··'}</span><div>{me?.name ?? '…'}<small>Disponível</small></div></div>
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar conversa ou chamado" aria-label="Pesquisar" />
-        <div className="tabs" role="tablist">
+    <div className={s.app}>
+      <nav className={s.rail} aria-label="Navegação">
+        <span className={s.logo}><LogoMark size={26} /></span>
+        <button type="button" className={s.railBtn} aria-label="Conversas" title="Conversas"><IconChat size={18} />{(list?.counts.needs ?? 0) > 0 && <span className={s.badge}>{list?.counts.needs}</span>}</button>
+        <div className={s.railBottom}>
+          <button type="button" className={s.iconBtn} title="Sair" aria-label="Sair" onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/'; }}><IconLogout /></button>
+          {me && <Avatar name={me.name} online small />}
+        </div>
+      </nav>
+
+      <section className={s.list}>
+        <div className={s.lhead}><h1>Conversas</h1><span className={s.avail}><i />Disponível</span></div>
+        <div className={s.search}><span><IconSearch size={16} /></span><input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Pesquisar conversa ou chamado" aria-label="Pesquisar" /></div>
+        <div className={s.tabs} role="tablist">
           {TABS.map((t) => (
-            <button key={t.key} role="tab" aria-selected={filter === t.key} className={filter === t.key ? 'on' : ''} onClick={() => setFilter(t.key)}>
-              {t.label}<i>{list?.counts[t.key] ?? 0}</i>
-            </button>
+            <button key={t.key} role="tab" aria-selected={filter === t.key} className={`${s.tab} ${filter === t.key ? s.on : ''}`} onClick={() => setFilter(t.key)}>{t.label}<i>{list?.counts[t.key] ?? 0}</i></button>
           ))}
         </div>
-        {list && list.items.length === 0 && <h4>Nenhuma conversa neste filtro</h4>}
-        {list?.items.map((i) => {
-          const tag = tagFor(i);
-          return (
-            <button key={i.id} className={`conv ${selectedId === i.id ? 'sel' : ''}`} onClick={() => { setSelectedId(i.id); setDetail(null); setError(''); }}>
-              <div className="top"><span>{i.user.name}</span><span className="time">{ago(i.updatedAt)}</span></div>
-              <small>{i.lastMessage ? `${i.lastMessage.sender === 'AGENT' ? 'Nexo: ' : ''}${i.lastMessage.text}` : 'Sem mensagens'}</small>
-              {tag && <small className={`tag ${tag.cls}`}>{tag.text}</small>}
-            </button>
-          );
-        })}
-        <a style={{ marginTop: 'auto', padding: '10px 12px', color: '#b8c0ca', cursor: 'pointer' }} onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); location.href = '/'; }}>Sair</a>
-      </aside>
+        <div className={s.items}>
+          {list && list.items.length === 0 && <div className={s.none}>Nenhuma conversa neste filtro.</div>}
+          {list?.items.map((i) => {
+            const tag = tagFor(i, i.status === 'ANALYST' ? me?.id : undefined);
+            const fresh = Date.now() - new Date(i.updatedAt).getTime() < 15 * 60_000;
+            return (
+              <button key={i.id} className={`${s.item} ${selectedId === i.id ? s.sel : ''}`} onClick={() => { setSelectedId(i.id); setDetail(null); setError(''); }}>
+                <Avatar name={i.user.name} online={fresh} />
+                <div>
+                  <div className={s.irow}><b>{i.user.name}</b><time className={i.unread > 0 ? s.hot : undefined}>{fmtTime(i.lastMessage?.createdAt ?? i.updatedAt)}</time></div>
+                  <div className={s.snip}>
+                    <span>{i.lastMessage ? `${i.lastMessage.sender === 'AGENT' ? 'Nexo: ' : ''}${i.lastMessage.text}` : 'Sem mensagens'}</span>
+                    {i.unread > 0 && <b className={s.unread}>{i.unread}</b>}
+                  </div>
+                  <div className={`${s.tag} ${s[tag.tone]}`}><i />{tag.text}</div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </section>
 
-      <main>
-        {!selectedId && <div className="empty small"><h1>Console do analista</h1><p>Selecione uma conversa para ver o histórico, as decisões do agent e os chamados do funcionário.</p></div>}
-        {selectedId && !detail && <div className="empty small"><p>Carregando conversa…</p></div>}
+      <section className={s.center}>
+        {!selectedId && <div className={s.empty}><h2>Console do analista</h2><p>Selecione uma conversa para ver o histórico, as decisões do agent e os chamados do funcionário.</p></div>}
+        {selectedId && !detail && <div className={s.empty}><p>Carregando conversa…</p></div>}
         {detail && c && (
           <>
-            <header className="convhead">
-              <div><b>{detail.user.name}</b><small>{detail.user.email} · {detail.user.department}</small></div>
-              <span className={`status ${c.status}`}>● {CONVERSATION_STATUS_LABEL[c.status]}{c.assignedAnalyst ? ` · ${c.assignedAnalyst.name}` : ''}</span>
-              {canTake && <button className="primary" disabled={busy} onClick={() => void act('take')}>Assumir atendimento</button>}
-              {mine && <button disabled={busy} onClick={() => void act('return')}>Devolver ao agent</button>}
-              {mine && <button disabled={busy} onClick={() => void act('close')}>Encerrar atendimento</button>}
+            <header className={s.chead}>
+              <Avatar name={detail.user.name} online={online} />
+              <div className={s.who}><b>{detail.user.name}</b><small>{online ? 'online' : 'offline'} · {detail.user.department}{handoffTicket ? ` · ${handoffTicket}` : ''}</small></div>
+              <span className={s.spacer} />
+              {c.status === 'AWAITING' && <span className={s.pill}><IconHand size={14} />Aguardando atendente</span>}
+              {c.status !== 'AWAITING' && <span className={`${s.pill}`} style={c.status === 'AGENT' || c.status === 'RESOLVED' ? { background: 'var(--green-soft)', color: 'var(--green)' } : c.status === 'ANALYST' ? { background: 'var(--blue-soft)', color: 'var(--blue)' } : { background: 'var(--panel)', color: 'var(--muted)' }}>{CONVERSATION_STATUS_LABEL[c.status]}{c.assignedAnalyst ? ` · ${c.assignedAnalyst.name}` : ''}</span>}
+              {mine && <button type="button" className={s.btn} disabled={busy} onClick={() => void act('return')}><IconBot size={15} />Devolver ao agent</button>}
+              {mine && <button type="button" className={`${s.btn} ${s.danger}`} disabled={busy} onClick={() => void act('close')}>Encerrar atendimento</button>}
+              <button type="button" className={s.iconBtn} title={panel ? 'Ocultar chamados' : 'Mostrar chamados'} aria-label="Painel de chamados" onClick={() => setPanel((v) => !v)}><IconPanel size={18} /></button>
             </header>
 
-            <div className="bar">
-              <div className="center">
-                {error && <div className="banner error" style={{ margin: '12px 80px 0' }} role="alert">{error}</div>}
+            <div className={s.feed}>
+              <div className={s.fcol}>
+                {error && <div className={s.banner} role="alert">{error}</div>}
                 {c.handoff && (
-                  <div className="handoff">
+                  <div className={s.handoff}>
                     <b>{HANDOFF_REASON_LABEL[c.handoff.reason]}{c.handoff.level ? ` · Suporte ${c.handoff.level}` : ''}{c.handoff.reason === 'low_confidence' && c.handoff.confidence != null ? ` · confiança ${Math.round(c.handoff.confidence * 100)}%` : ''}</b>
-                    {c.handoff.at && <small>Transferida em {fmtDateTime(c.handoff.at)}{c.handoff.ticket ? ` · ${c.handoff.ticket}` : ''}</small>}
+                    {c.handoff.at && <span>Transferida às {fmtTime(c.handoff.at)}{c.handoff.ticket ? ` · ${c.handoff.ticket}` : ''}</span>}
                     <p>{c.handoff.summary}</p>
                   </div>
                 )}
-                <div className="history">
-                  {detail.messages.map((m) => {
-                    if (m.sender === 'SYSTEM') return <div key={m.id} className="msg system"><div className="bubble">{m.text} · {fmtTime(m.createdAt)}</div></div>;
-                    const who = m.sender === 'USER' ? detail.user.name : m.sender === 'ANALYST' ? `${m.authorName ?? 'Analista'} · Suporte` : 'Nexo Assist';
-                    return (
-                      <div key={m.id} className={`msg ${m.sender.toLowerCase()}`}>
-                        <div className="who">{who} · {fmtTime(m.createdAt)}</div>
-                        {m.steps && <DecisionSteps steps={m.steps} />}
-                        <div className="bubble">{m.text}</div>
-                        {m.cards?.map((t) => <TicketCardView key={t.number} t={t} />)}
-                        {m.draft && <DraftCard d={m.draft} busy onConfirm={() => undefined} onEdit={() => undefined} onCancel={() => undefined} />}
-                      </div>
-                    );
-                  })}
-                </div>
-                <footer className="takebar">
-                  <div>
-                    {mine ? 'O agent está pausado enquanto você atende esta conversa.'
-                      : takenByOther ? `Esta conversa está com ${c.assignedAnalyst?.name}.`
-                      : c.status === 'CLOSED' ? 'Conversa encerrada.' : 'Assuma o atendimento para responder.'}
-                  </div>
-                  <div className="composer">
-                    <input
-                      value={text} disabled={!mine || busy} onChange={(e) => setText(e.target.value)} aria-label="Responder"
-                      onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) void act('message', text); }}
-                      placeholder={mine ? 'Responder ao funcionário…' : 'Assuma o atendimento para responder'}
-                    />
-                    <button disabled={!mine || busy || !text.trim()} onClick={() => void act('message', text)}>Enviar</button>
-                  </div>
-                </footer>
+                {detail.messages[0] && <span className={s.day}>{sameDayLabel(detail.messages[0].createdAt)}</span>}
+                {detail.messages.map((m) => {
+                  if (m.sender === 'SYSTEM') return <div key={m.id} className={s.sys}><IconSwap size={12} />{m.text.replace(/ · um analista fala.*$/, '')} · {fmtTime(m.createdAt)}</div>;
+                  if (m.sender === 'USER') return <div key={m.id} className={s.in}>{m.text}<div className={s.meta}>{fmtTime(m.createdAt)}</div></div>;
+                  const analyst = m.sender === 'ANALYST';
+                  return (
+                    <div key={m.id} className={s.out}>
+                      <MessageHead align="right" name={analyst ? (m.authorName ?? 'Analista') : 'Nexo Assist'} badge={analyst ? `Suporte ${c.handoff?.level ?? ''}`.trim() : 'IA'} badgeTone={analyst ? 'support' : 'ai'} steps={m.steps} />
+                      <div className={`${s.bub} ${analyst ? s.human : s.ai}`}>{m.text}<div className={s.meta}>{fmtTime(m.createdAt)} ✓✓</div></div>
+                      {m.cards?.map((t) => <div key={t.number} className={s.attach}><TicketCardView t={t} /></div>)}
+                      {m.draft && <div className={s.attach}><DraftCard d={m.draft} busy readOnly onConfirm={() => undefined} onEdit={() => undefined} onCancel={() => undefined} /></div>}
+                    </div>
+                  );
+                })}
               </div>
-
-              <aside className="sidepanel">
-                <h3>Chamados de {detail.user.name.split(' ')[0]}</h3>
-                <small>{detail.counts.open} abertos · {detail.counts.closed} encerrados</small>
-                {c.handoff?.ticket && <h5>Desta conversa</h5>}
-                {detail.tickets.filter((t) => t.number === c.handoff?.ticket).map((t) => <TicketRow key={t.number} t={t} hl />)}
-                <h5>Outros chamados</h5>
-                {detail.tickets.filter((t) => t.number !== c.handoff?.ticket).map((t) => <TicketRow key={t.number} t={t} />)}
-              </aside>
             </div>
+
+            <footer className={s.bar}>
+              {!mine && (
+                <div className={s.bartop}>
+                  <span className={s.hand}><IconHand size={18} /></span>
+                  <div>
+                    <b>{takenByOther ? `Com ${c.assignedAnalyst?.name}` : c.status === 'CLOSED' || c.status === 'RESOLVED' ? CONVERSATION_STATUS_LABEL[c.status] : `${firstName} espera um atendente`}</b>
+                    <small>{c.status === 'AWAITING' ? `Agent pausado${c.handoff?.respondBy ? ` · até ${fmtTime(c.handoff.respondBy)}` : ''}` : c.status === 'AGENT' ? 'Agent atendendo · você pode assumir quando quiser' : takenByOther ? 'Outro analista está atendendo' : 'Sem pendências'}</small>
+                  </div>
+                  <span className={s.spacer} style={{ flex: 1 }} />
+                  {c.status === 'AWAITING' && <button type="button" className={s.btn} disabled={busy} onClick={() => void act('return')}><IconBot size={15} />Devolver ao agent</button>}
+                  {canTake && <button type="button" className={`${s.btn} ${s.primary}`} disabled={busy} onClick={() => void act('take')}><IconHeadset size={15} />Assumir atendimento</button>}
+                </div>
+              )}
+              <div className={s.compose}>
+                <input value={text} disabled={!mine || busy} onChange={(e) => setText(e.target.value)} aria-label="Responder"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && text.trim()) void act('message', text); }}
+                  placeholder={mine ? 'Responder ao funcionário…' : 'Assuma o atendimento para responder'} />
+                {mine && <button type="button" className={s.round} aria-label="Enviar" disabled={busy || !text.trim()} onClick={() => void act('message', text)}><IconSend size={18} /></button>}
+              </div>
+            </footer>
           </>
         )}
-      </main>
-    </div>
-  );
-}
+      </section>
 
-function TicketRow({ t, hl }: { t: TicketCard; hl?: boolean }) {
-  return (
-    <div className={`ticketitem ${hl ? 'hl' : ''}`}>
-      <b>{t.number} · {statusLabel(t.status)}</b>
-      <strong>{t.title}</strong>
-      <small>{t.category} · prioridade {priorityLabel(t.priority).toLowerCase()} · atualizado {ago(t.lastUpdate)}</small>
-      {t.overdue && <small className="late">Prazo vencido</small>}
+      {detail && c && panel && (
+        <aside className={s.side}>
+          <div className={s.shead}>
+            <div><b>Chamados da {firstName}</b><small>{detail.counts.open} abertos · {detail.counts.closed} encerrados</small></div>
+            <button type="button" className={s.iconBtn} aria-label="Fechar painel" onClick={() => setPanel(false)}><IconClose size={16} /></button>
+          </div>
+          {detail.tickets.filter((t) => t.number === handoffTicket).map((t) => (
+            <div key={t.number}>
+              <div className={s.sec}>Desta conversa</div>
+              <div className={s.tcard}>
+                <div className={s.t1}>
+                  <span>{t.number}</span>
+                  <span style={{ color: DOT[statusTone(t.status)] }}><i style={{ background: DOT[statusTone(t.status)] }} />{statusLabel(t.status)}</span>
+                </div>
+                <strong>{t.title}</strong>
+                <small>{t.category} · prioridade {priorityLabel(t.priority).toLowerCase()}{t.overdue ? ' · prazo vencido' : ''}</small>
+                <div className={s.t3}>
+                  {mine || takenByOther ? <span><IconHeadset size={14} />Assumido por {c.assignedAnalyst?.name}</span> : <span><IconSwap size={14} />Transferido para um analista</span>}
+                  <time>{fmtTime((mine || takenByOther ? takenAt : c.handoff?.at) ?? t.lastUpdate)}</time>
+                </div>
+              </div>
+            </div>
+          ))}
+          <div className={s.sec}>{handoffTicket ? 'Outros chamados' : 'Chamados'}</div>
+          {detail.tickets.filter((t) => t.number !== handoffTicket).map((t) => (
+            <div key={t.number} className={s.row}>
+              <i style={{ background: DOT[statusTone(t.status)] }} />
+              <div>
+                <b>{t.title}</b>
+                <small>{t.number} · {t.status === 'RESOLVED' ? `Resolvido em ${fmtDay(t.lastUpdate)}` : statusLabel(t.status)}{t.overdue && <span className={s.late}> · vencido</span>}</small>
+              </div>
+              <IconChevron size={14} />
+            </div>
+          ))}
+        </aside>
+      )}
     </div>
   );
 }

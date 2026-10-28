@@ -1,22 +1,29 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
+import { LogoMark } from "@/components/AppShell";
+import { IconArrowRight, IconEye, IconEyeOff, IconLock, IconMail } from "@/components/Icons";
+import s from "./login.module.css";
 
 export default function Login() {
   const [email, setEmail] = useState("ana.souza@nexo.com.br");
   const [pw, setPw] = useState("nexo123");
+  const [show, setShow] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setInfo("");
     try {
       const r = await fetch("/api/auth/login", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ email, password: pw }),
+        body: JSON.stringify({ email, password: pw, remember }),
       });
       if (r.ok) {
         const u = (await r.json()) as { role: string };
@@ -30,90 +37,66 @@ export default function Login() {
     }
     setLoading(false);
   }
-  
+
   return (
-    <main className="login">
-      <section className="showcase">
-        <div className="brand">
-          <span className="mark">N</span>
-          <b>Nexo Assist</b>
-        </div>
-        <div className="story">
-          <div>
-            <small>Service desk de TI da Nexo</small>
-            <h1>Seu problema de TI, resolvido em uma conversa.</h1>
-            <p>
-              Descreva o que está acontecendo. O assistente consulta seus
-              chamados, busca na central de ajuda e chama um analista quando
-              precisa.
-            </p>
-          </div>
-          <div className="preview">
-            <div className="bubble user">
-              Meu notebook não conecta na VPN. Erro 809.
-            </div>
-            <div className="agentline">
-              <b>Nexo Assist</b>
-              <span>consultou seus chamados · criou um chamado</span>
-            </div>
-            <div className="bubble agent">
-              Pronto: abri o chamado com prioridade alta. Um analista fala com
-              você em até 4 h úteis.
-            </div>
-            <div className="ticket">
-              INC-20517 <span>Rede e VPN · Alta · em até 4 h</span>
-            </div>
+    <main className={s.page}>
+      <section className={s.hero}>
+        <div className={s.brand}><LogoMark size={22} />Nexo Assist</div>
+        <div className={s.copy}>
+          <div className={s.eyebrow}>Service desk de TI da Nexo</div>
+          <h1>Seu problema de TI, resolvido em uma conversa.</h1>
+          <p className={s.lead}>Descreva o que está acontecendo. O assistente consulta seus chamados, busca na central de ajuda e chama um analista quando precisa.</p>
+          <div className={s.demo} aria-hidden>
+            <div className={s.bu}>Meu notebook não conecta na VPN. Erro 809.</div>
+            <div className={s.who}>Nexo Assist<span>consultou seus chamados · criou um chamado</span></div>
+            <div className={s.ba}>Pronto: abri o chamado com prioridade alta. Um analista fala com você em até 4 h úteis.</div>
+            <div className={s.tag}><i /><b>INC-20517</b><small>Rede e VPN · Alta · em até 4 h</small></div>
           </div>
         </div>
-        <div className="stats">
-          <div>
-            <b>8 s</b>
-            <span>primeira resposta, em média</span>
-          </div>
-          <div>
-            <b>72%</b>
-            <span>resolvidos sem fila</span>
-          </div>
-          <div>
-            <b>6</b>
-            <span>analistas online agora</span>
-          </div>
+        <div className={s.stats}>
+          <div><b>8 s</b><span>primeira resposta, em média</span></div>
+          <div><b>72%</b><span>resolvidos sem fila</span></div>
+          <div><b>6<i className={s.live} /></b><span>analistas online agora</span></div>
         </div>
       </section>
-      <section className="signin">
-        <div className="help">
-          Problema para entrar? <b>Ligue no ramal 4000</b>
-        </div>
-        <form onSubmit={submit}>
-          <div>
-            <h2>Entrar</h2>
-            <p>Use seu e-mail corporativo e a senha da rede Nexo.</p>
+
+      <section className={s.form}>
+        <div className={s.help}>Problema para entrar? <a href="tel:4000">Ligue no ramal 4000</a></div>
+        <form className={s.box} onSubmit={submit} noValidate>
+          <h2>Entrar</h2>
+          <p>Use seu e-mail corporativo e a senha da rede Nexo.</p>
+
+          <label className={s.label} htmlFor="email">E-mail corporativo</label>
+          <div className={s.field}>
+            <span className={s["lead-icon"]}><IconMail /></span>
+            <input id="email" type="email" autoComplete="username" value={email} onChange={(e) => setEmail(e.target.value)} />
           </div>
-          <label>
-            E-mail corporativo
-            <input value={email} onChange={(e) => setEmail(e.target.value)} />
+
+          <div className={s.label}>
+            <label htmlFor="pw">Senha</label>
+            <button type="button" className={s.link} onClick={() => setInfo("Para recuperar o acesso, ligue no ramal 4000.")}>Esqueci minha senha</button>
+          </div>
+          <div className={s.field}>
+            <span className={s["lead-icon"]}><IconLock /></span>
+            <input id="pw" type={show ? "text" : "password"} autoComplete="current-password" value={pw} onChange={(e) => setPw(e.target.value)} />
+            <button type="button" className={s.eye} onClick={() => setShow((v) => !v)} aria-label={show ? "Ocultar senha" : "Mostrar senha"}>
+              {show ? <IconEyeOff /> : <IconEye />}
+            </button>
+          </div>
+
+          <label className={s.remember}>
+            <input type="checkbox" checked={remember} onChange={(e) => setRemember(e.target.checked)} />
+            Manter conectado neste computador
           </label>
-          <label>
-            Senha
-            <input
-              type="password"
-              value={pw}
-              onChange={(e) => setPw(e.target.value)}
-            />
-          </label>
-          <label className="check">
-            <input type="checkbox" defaultChecked /> Manter conectado neste
-            computador
-          </label>
-          {error && <div className="banner error" role="alert">{error}</div>}
-          <button disabled={loading}>{loading ? "Entrando…" : "Entrar"}</button>
-          <small>
-            Dados de exemplo: ana.souza@nexo.com.br / nexo123
-            <br />
-            Analista: rafael.lima@nexo.com.br / nexo123
-          </small>
+
+          {error && <div className={s.msg} role="alert">{error}</div>}
+          {info && <div className={`${s.msg} ${s.info}`} role="status">{info}</div>}
+          <button className={s.submit} disabled={loading || !email.trim() || !pw}>
+            {loading ? "Entrando…" : <>Entrar<IconArrowRight size={16} /></>}
+          </button>
+          <div className={s.rule} />
         </form>
-        <footer>© 2026 Nexo · Service desk de TI</footer>
+        <div className={s.foot}><span>© 2026 Nexo · Service desk de TI</span><a href="#privacidade">Privacidade e uso de dados</a></div>
       </section>
     </main>
   );

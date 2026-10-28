@@ -7,7 +7,7 @@ export async function GET() {
   if (!s) return NextResponse.json({ error: 'Não autenticado' }, { status: 401 });
   const { user } = s;
   return NextResponse.json({
-    id: user.id, name: user.name, email: user.email, role: user.role, department: user.department,
+    id: user.id, name: user.name, email: user.email, role: user.role, department: user.department, passwordChangedAt: user.passwordChangedAt.toISOString(),
     session: { count: s.messageCount, max: maxMessagesPerSession() },
   });
 }

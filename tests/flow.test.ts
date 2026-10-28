@@ -54,9 +54,12 @@ describe('abertura de chamado: só depois da confirmação', () => {
     expect(await db.ticket.count()).toBe(0);
     const d = await db.draft.findFirstOrThrow();
     expect(d.priority).toBe('HIGH'); // compromisso no mesmo dia
-    expect(state.steps[0]).toMatchObject({ action: 'proposeDraft', confidence: 0.9, status: 'ok' });
-    expect(state.steps[0]?.understood).toBeTruthy();
-    expect(state.steps[0]?.reason).toBeTruthy();
+    expect(state.steps.map((s) => s.action)).toEqual(['classifyPriority', 'checkSla', 'proposeDraft']); // três chips, como no protótipo
+    const main = state.steps.find((s) => s.action === 'proposeDraft');
+    expect(main).toMatchObject({ confidence: 0.9, status: 'ok' });
+    expect(main?.understood).toBeTruthy();
+    expect(main?.reason).toBeTruthy();
+    expect(state.steps[0]?.what).toContain('Alta');
   });
   it('confirmar cria o chamado com os dados do SERVIDOR e responde com card', async () => {
     const { ctx } = ctxFor(ana.id, convId);
@@ -133,9 +136,9 @@ describe('duplicidade e reabertura', () => {
     const a = buildActions(ctx);
     const ok = { kind: 'reopen', title: 'x', description: 'Voltou a bloquear.', type: 'INC', category: 'Acesso', affected: 'Só eu', blocksWork: true, sameDayCommitment: false, hasWorkaround: false, ...R } as const;
     await a.proposeDraft({ ...ok, ticketNumber: recent.number });
-    expect(state.steps[0]?.status).toBe('ok');
     await a.proposeDraft({ ...ok, ticketNumber: old.number });
-    expect(state.steps[1]?.status).toBe('error');
+    const drafts = state.steps.filter((s) => s.action === 'proposeDraft');
+    expect(drafts.map((s) => s.status)).toEqual(['ok', 'error']);
   });
 });
 
@@ -166,6 +169,11 @@ describe('transferência e pausa do agent', () => {
     await analystTake(convId, marina);
     await analystClose(convId, marina);
     expect((await db.conversation.findUniqueOrThrow({ where: { id: convId } })).status).toBe('CLOSED');
+  });
+  it('analista pode devolver ao agent uma conversa que ainda aguarda atendente (sem assumir)', async () => {
+    await handoffToAnalyst(convId, { reason: 'user_request', summary: 's' });
+    await analystReturn(convId, rafael);
+    expect((await db.conversation.findUniqueOrThrow({ where: { id: convId } })).status).toBe('AGENT');
   });
   it('estado da conversa sobrevive a "reinício" (nova leitura do banco)', async () => {
     await handoffToAnalyst(convId, { reason: 'user_request', summary: 's' });

@@ -15,6 +15,7 @@ model User {
   name          String
   email         String         @unique
   password      String // hash scrypt (formato "salt:hash"), nunca texto puro
+  passwordChangedAt DateTime   @default(now())
   role          String         @default("EMPLOYEE")
   department    String         @default("Financeiro")
   conversations Conversation[]

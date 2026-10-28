@@ -13,8 +13,8 @@ npm test                  # testes (usam um SQLite separado, test.db)
 npm run typecheck
 ```
 
-Usuários de exemplo (senha `nexo123`; o PRD aceita qualquer senha, aqui ela fica guardada só como hash):
-`ana.souza@nexo.com.br` (3 chamados abertos, 1 vencido, 1 reabrível) · `rafael.lima@nexo.com.br` e `marina.alves@nexo.com.br` (analistas).
+Usuários de exemplo. **O login aceita qualquer senha** (o PRD pede isso para os funcionários do seed; a identidade é o e-mail corporativo). As senhas ficam guardadas como hash (`nexo123`), prontas para virar autenticação real trocando uma linha em `app/api/auth/login/route.ts`:
+`ana.souza@nexo.com.br` (3 abertos, 1 vencido, 1 resolvido há 4 dias que ainda pode ser reaberto) · `rafael.lima@nexo.com.br` e `marina.alves@nexo.com.br` (analistas). O seed também cria 7 conversas para o console abrir populado (3 transferidas, 2 com o agent, 2 resolvidas pelo agent).
 
 ## Arquitetura
 
@@ -47,6 +47,10 @@ Testes sobre o código real (`npm test`, 48 casos): SLA em horas/dias úteis e v
 ## Modelo
 
 `openai/gpt-4.1-mini` por padrão (`MODEL` no .env): bom em tool calling, baixa latência e custo baixo por conversa. Custo controlado com `maxSteps: 6`, saída limitada, só as últimas 10 mensagens no contexto, instruções enxutas, prioridade/SLA em código (sem tokens) e limite de 30 mensagens por sessão e 1000 caracteres por mensagem. Para trocar, ex.: `MODEL=anthropic/claude-haiku-4-5` + `ANTHROPIC_API_KEY`.
+
+## Telas e protótipo
+
+Seguem o `nexo.pen`: login em dois painéis, chat (rascunho com Confirmar/Editar/Cancelar e atalho ⌘↵, opções rápidas dentro do balão, lista selecionável de chamados, card de chamado com prazo vencido), Meu perfil e console em três colunas (lista com filtros, conversa, painel "Chamados do funcionário"). Simulados neste protótipo: "Redefinir senha" (não envia e-mail), "Esqueci minha senha" (mostra o ramal 4000) e o indicador "online" do console (considera atividade nos últimos 15 minutos).
 
 ## Trade-offs
 

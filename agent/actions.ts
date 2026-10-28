@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { classifyPriority } from '../lib/priority';
 import { canReopen, dueAt, isOpenStatus, SLA_LABEL } from '../lib/sla';
-import type { Affected, Category, DecisionStep, Priority, QuickOptions, TicketCard, TicketType } from '../lib/types';
+import { STATUS_LABEL, type Affected, type Category, type DecisionStep, type Priority, type QuickOptions, type TicketCard, type TicketType } from '../lib/types';
 import { handoffToAnalyst } from '../services/conversation-service';
 import { createDraft, type NewDraft } from '../services/draft-service';
 import { searchHelp } from '../services/help-service';
@@ -29,6 +29,13 @@ export type ActionCtx = {
 };
 
 type Result = Record<string, unknown>;
+
+/** Passo determinístico gerado dentro de uma ação (ex.: cálculo de prioridade/SLA), mostrado como chip próprio. */
+function substep(ctx: ActionCtx, r: Reasoning, action: string, label: string, what: string, data: Record<string, unknown>) {
+  const s: DecisionStep = { id: randomUUID(), action, label, understood: r.understood, confidence: Math.max(0, Math.min(1, r.confidence)), reason: r.reason, what, data, status: 'ok', ms: 0 };
+  ctx.state.steps.push(s);
+  ctx.emit(s);
+}
 type Outcome = { result: Result; what: string; data?: Record<string, unknown> };
 
 /** Executa uma ação, mede o tempo e registra o passo (entendeu / fez / confiança / por quê) para a interface. */
@@ -75,7 +82,7 @@ export function buildActions(ctx: ActionCtx) {
         if (i.showAsChoices && list.length > 1)
           ctx.state.options = {
             kind: 'tickets', question: 'Escolha um chamado',
-            items: list.map((c) => ({ label: `${c.number} · ${c.title}`, value: `${c.number} · ${c.title}`, hint: c.overdue ? `${c.status} · vencido` : c.status })),
+            items: list.map((c) => ({ label: `${c.number} · ${c.title}`, value: `${c.number} · ${c.title}`, hint: `${STATUS_LABEL[c.status]}${c.overdue ? ' · vencido' : ''} · ${new Date(c.lastUpdate).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short' })}` })),
           };
         return {
           result: { total: list.length, chamados: list.map(brief) },
@@ -121,6 +128,9 @@ export function buildActions(ctx: ActionCtx) {
               data: { duplicadoDe: dup.ticket.number, similaridade: Number(dup.score.toFixed(2)) },
             };
           const p = classifyPriority({ type: i.type, affected: i.affected, blocksWork: i.blocksWork, sameDayCommitment: i.sameDayCommitment, hasWorkaround: i.hasWorkaround });
+          substep(ctx, i, 'classifyPriority', 'classificou a prioridade', p.reason, {
+            impacto: i.affected, impedeTrabalho: i.blocksWork, compromissoNoDia: i.sameDayCommitment, temAlternativa: i.hasWorkaround, prioridade: p.priority,
+          });
           d = { conversationId: ctx.conversationId, kind: 'create', title: i.title, description: i.description, type: i.type, category: i.category, priority: p.priority, priorityReason: p.reason, affected: i.affected, dueAt: dueAt(p.priority, now) };
         } else {
           const t = await legacy(() => ticketService.getForUser(ctx.userId, i.ticketNumber ?? ''));
@@ -129,6 +139,9 @@ export function buildActions(ctx: ActionCtx) {
           if (i.kind === 'update' && !isOpenStatus(t.status)) throw new Error('chamado_encerrado: use kind=reopen se foi resolvido há até 7 dias');
           d = { conversationId: ctx.conversationId, kind: i.kind, ticketNumber: t.number, title: t.title, description: i.description, type: t.type as TicketType, category: t.category, priority: t.priority as Priority, priorityReason: `Mantém a prioridade atual do chamado (${t.priority}).`, affected: t.affected, dueAt: dueAt(t.priority as Priority, now) };
         }
+        substep(ctx, i, 'checkSla', 'consultou o SLA', `Prazo da prioridade ${d.priority}: ${SLA_LABEL[d.priority]}; resposta até ${d.dueAt.toLocaleString('pt-BR')}.`, {
+          prioridade: d.priority, prazo: SLA_LABEL[d.priority], respostaAte: d.dueAt.toISOString(),
+        });
         const draft = await createDraft(d);
         ctx.state.draftId = draft.id;
         return {

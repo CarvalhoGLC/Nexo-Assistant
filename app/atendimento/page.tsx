@@ -1,12 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DecisionSteps } from '@/components/DecisionSteps';
+import { AppShell } from '@/components/AppShell';
 import { DraftCard } from '@/components/DraftCard';
+import { IconSend, IconSwap } from '@/components/Icons';
+import { MessageHead } from '@/components/MessageHead';
 import { QuickOptionsView } from '@/components/QuickOptionsView';
 import { TicketCardView } from '@/components/TicketCardView';
-import { ago, priorityLabel, statusLabel } from '@/lib/format';
-import type { ChatEvent, ConversationStatus, DecisionStep, MessageDTO, SessionInfo, TicketCard } from '@/lib/types';
+import s from './chat.module.css';
+import { fmtTime } from '@/lib/format';
+import type { ChatEvent, ConversationStatus, DecisionStep, MessageDTO, SessionInfo } from '@/lib/types';
 
 type Me = { id: string; name: string; email: string; role: string; department: string; session: SessionInfo };
 type ChatState = { status: ConversationStatus; messages: MessageDTO[]; session: SessionInfo };
@@ -22,7 +25,6 @@ export default function Atendimento() {
   const [messages, setMessages] = useState<MessageDTO[]>([]);
   const [status, setStatus] = useState<ConversationStatus>('AGENT');
   const [session, setSession] = useState<SessionInfo>({ count: 0, max: 30 });
-  const [tickets, setTickets] = useState<TicketCard[]>([]);
   const [text, setText] = useState('');
   const [streaming, setStreaming] = useState<Streaming | null>(null);
   const [error, setError] = useState<{ message: string; retry?: () => void } | null>(null);
@@ -34,11 +36,7 @@ export default function Atendimento() {
   const sending = streaming !== null;
   const humanHandling = status === 'AWAITING' || status === 'ANALYST';
   const full = session.count >= session.max;
-
-  const loadTickets = useCallback(async () => {
-    const r = await fetch('/api/tickets');
-    if (r.ok) setTickets((await r.json()) as TicketCard[]);
-  }, []);
+  const pending = [...messages].reverse().find((m) => m.draft?.status === 'PENDING')?.draft;
 
   const loadChat = useCallback(async () => {
     const r = await fetch('/api/chat');
@@ -56,16 +54,16 @@ export default function Atendimento() {
         const u = (await r.json()) as Me;
         if (u.role === 'ANALYST') { location.href = '/analista'; return; }
         setMe(u);
-        await Promise.all([loadChat(), loadTickets()]);
+        await loadChat();
       } catch (e) {
         setError({ message: e instanceof Error ? e.message : 'Falha ao carregar.', retry: () => location.reload() });
       } finally {
         setLoading(false);
       }
     })();
-  }, [loadChat, loadTickets]);
+  }, [loadChat]);
 
-  // Com a conversa com um analista, buscamos novas mensagens periodicamente.
+  // Com um analista envolvido, buscamos novas mensagens periodicamente.
   useEffect(() => {
     if (!humanHandling) return;
     const t = setInterval(() => { void loadChat().catch(() => undefined); }, 4000);
@@ -89,18 +87,17 @@ export default function Atendimento() {
         setError({ message: await readError(r, 'Não foi possível enviar a mensagem.'), retry: () => void send(msg) });
         return;
       }
-      if (r.headers.get('content-type')?.includes('application/json')) { await loadChat(); return; } // conversa com analista
-      await consume(r, optimistic.id);
+      if (r.headers.get('content-type')?.includes('application/json')) { await loadChat(); return; } // conversa com analista: o agent não responde
+      await consume(r);
     } catch {
       setMessages((m) => m.filter((x) => x.id !== optimistic.id)); setText(msg);
       setError({ message: 'Sem conexão com o servidor. Verifique a rede e tente de novo.', retry: () => void send(msg) });
     } finally {
       setStreaming(null);
-      void loadTickets();
     }
   }
 
-  async function consume(r: Response, optimisticId: string) {
+  async function consume(r: Response) {
     if (!r.body) throw new Error('Resposta vazia');
     const reader = r.body.getReader();
     const dec = new TextDecoder();
@@ -115,27 +112,32 @@ export default function Atendimento() {
         buf = buf.slice(i + 2);
         if (!line.startsWith('data:')) continue;
         const ev = JSON.parse(line.slice(5)) as ChatEvent;
-        if (ev.type === 'step') setStreaming((s) => (s ? { ...s, steps: [...s.steps, ev.step] } : s));
-        else if (ev.type === 'text') setStreaming((s) => (s ? { ...s, text: s.text + ev.delta } : s));
-        else if (ev.type === 'done') {
-          setMessages((m) => [...m.filter((x) => x.id !== optimisticId), ...ev.messages]);
-          setStatus(ev.status); setSession(ev.session);
-          await loadChat(); // troca a mensagem otimista pela gravada no servidor
-        }
+        if (ev.type === 'step') setStreaming((st) => (st ? { ...st, steps: [...st.steps, ev.step] } : st));
+        else if (ev.type === 'text') setStreaming((st) => (st ? { ...st, text: st.text + ev.delta } : st));
+        else if (ev.type === 'done') { setStatus(ev.status); setSession(ev.session); await loadChat(); }
       }
     }
   }
 
-  async function draftAction(code: string, action: 'confirm' | 'cancel') {
+  const draftAction = useCallback(async (code: string, action: 'confirm' | 'cancel') => {
     setDraftBusy(true); setError(null);
     try {
       const r = await fetch('/api/chat/draft', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ code, action }) });
       if (!r.ok) { setError({ message: await readError(r, 'Não foi possível concluir.'), retry: action === 'confirm' ? () => void draftAction(code, action) : undefined }); return; }
-      await Promise.all([loadChat(), loadTickets()]);
+      await loadChat();
     } finally {
       setDraftBusy(false);
     }
-  }
+  }, [loadChat]);
+
+  // Atalho do botão Confirmar: ⌘↵ / Ctrl+↵
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && pending && !draftBusy && !sending) { e.preventDefault(); void draftAction(pending.code, 'confirm'); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [pending, draftBusy, sending, draftAction]);
 
   async function logout() {
     await fetch('/api/auth/logout', { method: 'POST' });
@@ -144,100 +146,72 @@ export default function Atendimento() {
 
   const last = messages[messages.length - 1];
   const optionsEnabled = !sending && !full && !humanHandling;
+  const pill = status === 'ANALYST' ? { t: 'Em atendimento com um analista', c: s.blue } : status === 'AWAITING' ? { t: 'Aguardando um analista', c: s.amber } : { t: 'Assistente online', c: '' };
 
   return (
-    <div className="app">
-      <aside>
-        <div className="brand"><span className="mark">N</span><b>Nexo Assist</b></div>
-        <nav><a className="active">Atendimento</a></nav>
-        <div className="user">
-          <span>{me?.name.slice(0, 2).toUpperCase() ?? 'NX'}</span>
-          <div>{me?.name}<small>{me?.email}</small></div>
-        </div>
-        <a onClick={() => void logout()}>Sair</a>
-      </aside>
+    <AppShell active="atendimento" user={me} title="Atendimento" onLogout={() => void logout()}
+      headerRight={<span className={`${s.pill} ${pill.c}`}><i />{pill.t}</span>}>
+      <div className={s.scroll} aria-live="polite">
+        {error && <div className={`${s.banner} ${s.error}`} role="alert">{error.message}{error.retry && <button type="button" onClick={error.retry}>Tentar de novo</button>}</div>}
+        {humanHandling && <div className={s.banner}>{status === 'AWAITING' ? 'Sua conversa foi transferida. Um analista vai assumir em breve e o Nexo Assist não responde até lá.' : 'Você está falando com um analista. O Nexo Assist está pausado.'}</div>}
+        {full && <div className={s.banner}>Você atingiu o limite de {session.max} mensagens desta sessão. Saia e entre de novo para continuar.</div>}
 
-      <main className="chatpage">
-        <header>
-          <span>Service desk de TI / Atendimento</span>
-          <b>{status === 'AGENT' ? '● Assistente online' : status === 'ANALYST' ? '● Em atendimento com um analista' : status === 'AWAITING' ? '● Aguardando um analista' : '● Assistente online'}</b>
-        </header>
-
-        <div className="chatlayout">
-          <section className="messages" aria-live="polite">
-            {error && <div className="banner error" role="alert">{error.message}{error.retry && <button type="button" onClick={error.retry}>Tentar de novo</button>}</div>}
-            {humanHandling && <div className="banner">{status === 'AWAITING' ? 'Sua conversa foi transferida. Um analista vai assumir em breve e o Nexo Assist não responde até lá.' : 'Você está falando com um analista. O Nexo Assist está pausado.'}</div>}
-            {full && <div className="banner">Você atingiu o limite de {session.max} mensagens desta sessão. Saia e entre de novo para continuar.</div>}
-
-            {loading && <div className="empty"><p>Carregando sua conversa…</p></div>}
-            {!loading && messages.length === 0 && (
-              <div className="empty">
-                <h2>Olá{me ? `, ${me.name.split(' ')[0]}` : ''}. Como posso ajudar?</h2>
-                <p>Descreva seu problema de TI com suas palavras ou pergunte sobre um chamado.</p>
-                <div className="quick">
-                  <button onClick={() => void send('Qual o status do meu chamado?')}>Ver meus chamados</button>
-                  <button onClick={() => void send('Meu notebook não conecta na VPN. Erro 809.')}>Problema com VPN</button>
-                  <button onClick={() => void send('Quero falar com um analista')}>Falar com analista</button>
-                </div>
+        <div className={s.col}>
+          {loading && <div className={s.empty}><p>Carregando sua conversa…</p></div>}
+          {!loading && messages.length === 0 && !streaming && (
+            <div className={s.empty}>
+              <h2>Olá{me ? `, ${me.name.split(' ')[0]}` : ''}. Como posso ajudar?</h2>
+              <p>Descreva seu problema de TI com suas palavras ou pergunte sobre um chamado.</p>
+              <div className={s.quick}>
+                <button onClick={() => void send('Qual o status do meu chamado?')}>Ver meus chamados</button>
+                <button onClick={() => void send('Meu notebook não conecta na VPN. Erro 809.')}>Problema com VPN</button>
+                <button onClick={() => void send('Quero falar com um analista')}>Falar com analista</button>
               </div>
-            )}
-
-            {messages.map((m) => {
-              if (m.sender === 'SYSTEM') return <div key={m.id} className="msg system"><div className="bubble">{m.text}</div></div>;
-              const who = m.sender === 'USER' ? 'Você' : m.sender === 'ANALYST' ? `${m.authorName ?? 'Analista'} · Suporte` : 'Nexo Assist';
-              return (
-                <div key={m.id} className={`msg ${m.sender.toLowerCase()}`}>
-                  <div className="who">{who}</div>
-                  {m.steps && <DecisionSteps steps={m.steps} />}
-                  <div className="bubble">{m.text}</div>
-                  {m.cards?.map((c) => <TicketCardView key={c.number} t={c} />)}
-                  {m.draft && (
-                    <DraftCard
-                      d={m.draft} busy={draftBusy}
-                      onConfirm={() => void draftAction(m.draft!.code, 'confirm')}
-                      onCancel={() => void draftAction(m.draft!.code, 'cancel')}
-                      onEdit={() => { setText('Quero ajustar o rascunho: '); input.current?.focus(); }}
-                    />
-                  )}
-                  {m.options && m.id === last?.id && <QuickOptionsView o={m.options} disabled={!optionsEnabled} onPick={(v) => void send(v)} />}
-                </div>
-              );
-            })}
-
-            {streaming && (
-              <div className="msg agent">
-                <div className="who">Nexo Assist</div>
-                <DecisionSteps steps={streaming.steps} />
-                <div className={`bubble ${streaming.text ? '' : 'cursor'}`}>{streaming.text || (streaming.steps.length ? 'Analisando…' : 'Pensando…')}</div>
-              </div>
-            )}
-            <div ref={bottom} />
-
-            <div className="composer">
-              <input
-                ref={input} value={text} maxLength={1000} disabled={sending || full}
-                onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void send(text); }}
-                placeholder={humanHandling ? 'Escreva para o analista…' : 'Escreva para o Nexo…'} aria-label="Mensagem"
-              />
-              <button onClick={() => void send(text)} disabled={sending || full || !text.trim()}>{sending ? 'Enviando…' : 'Enviar'}</button>
             </div>
-            <div className={`counter ${full ? 'full' : ''}`}>{session.count}/{session.max} mensagens nesta sessão</div>
-          </section>
+          )}
 
-          <aside className="ticketpanel">
-            <h3>Seus chamados</h3>
-            {tickets.length === 0 && <small>Nenhum chamado ainda.</small>}
-            {tickets.map((t) => (
-              <div className="ticketitem" key={t.number}>
-                <b>{t.number}</b>
-                <strong>{t.title}</strong>
-                <small>{t.category} · {priorityLabel(t.priority)} · {statusLabel(t.status)} · {ago(t.lastUpdate)}</small>
-                {t.overdue && <small className="late">Prazo vencido</small>}
+          {messages.map((m) => {
+            if (m.sender === 'SYSTEM') return <div key={m.id} className={s.system}><IconSwap size={13} />{m.text} · {fmtTime(m.createdAt)}</div>;
+            if (m.sender === 'USER') return <div key={m.id} className={s.user}>{m.text}</div>;
+            const analyst = m.sender === 'ANALYST';
+            const q = m.options?.kind === 'options' ? m.options : undefined;
+            return (
+              <div key={m.id} className={s.msg}>
+                <MessageHead name={analyst ? (m.authorName ?? 'Analista') : 'Nexo Assist'} badge={analyst ? 'Suporte' : undefined} badgeTone="support" steps={m.steps} />
+                {m.cards?.map((c) => <TicketCardView key={c.number} t={c} />)}
+                <div className={`${s.bubble} ${analyst ? s.analyst : ''}`} style={m.cards?.length ? { marginTop: 10 } : undefined}>
+                  {m.text}
+                  {q && m.id === last?.id && <QuickOptionsView o={q} disabled={!optionsEnabled} onPick={(v) => void send(v)} hideQuestion={m.text.includes(q.question)} />}
+                </div>
+                {m.options?.kind === 'tickets' && m.id === last?.id && <QuickOptionsView o={m.options} disabled={!optionsEnabled} onPick={(v) => void send(v)} />}
+                {m.draft && (
+                  <DraftCard d={m.draft} busy={draftBusy}
+                    onConfirm={() => void draftAction(m.draft!.code, 'confirm')} onCancel={() => void draftAction(m.draft!.code, 'cancel')}
+                    onEdit={() => { setText('Quero ajustar o rascunho: '); input.current?.focus(); }} />
+                )}
               </div>
-            ))}
-          </aside>
+            );
+          })}
+
+          {streaming && (
+            <div className={s.msg}>
+              <MessageHead name="Nexo Assist" steps={streaming.steps} />
+              <div className={`${s.bubble} ${streaming.text ? '' : s.typing}`}>{streaming.text || (streaming.steps.length ? 'Analisando' : 'Pensando')}</div>
+            </div>
+          )}
+          <div ref={bottom} />
         </div>
-      </main>
-    </div>
+      </div>
+
+      <div className={s.dock}>
+        <div className={s.composer}>
+          <input ref={input} value={text} maxLength={1000} disabled={sending || full} aria-label="Mensagem"
+            onChange={(e) => setText(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.metaKey && !e.ctrlKey) void send(text); }}
+            placeholder={humanHandling ? 'Escreva para o analista…' : 'Escreva para o Nexo…'} />
+          <button type="button" className={s.send} onClick={() => void send(text)} disabled={sending || full || !text.trim()}><IconSend />{sending ? 'Enviando…' : 'Enviar'}</button>
+        </div>
+        <div className={`${s.counter} ${full ? s.full : ''}`}>{session.count}/{session.max} mensagens nesta sessão</div>
+      </div>
+    </AppShell>
   );
 }

@@ -63,3 +63,7 @@ export function isOverdue(t: { status: string; priority: string; lastUpdate: Dat
 export const REOPEN_WINDOW_DAYS = 7;
 export const canReopen = (t: { status: string; resolvedAt: Date | null }, at: Date): boolean =>
   t.status === 'RESOLVED' && !!t.resolvedAt && at.getTime() - t.resolvedAt.getTime() <= REOPEN_WINDOW_DAYS * 86400_000;
+
+/** Prazo para o analista responder uma conversa transferida: N2 em 2 h úteis, N1 em 4 h úteis. */
+export const ANALYST_ETA_HOURS = { N1: 4, N2: 2 } as const;
+export const respondBy = (handoffAt: Date, level: 'N1' | 'N2'): Date => addBusinessHours(handoffAt, ANALYST_ETA_HOURS[level]);
