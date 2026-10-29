@@ -20,7 +20,7 @@ export async function GET(req: Request) {
     if (filter === 'needs') where.status = 'AWAITING';
     else if (filter === 'agent') where.status = { in: ['AGENT', 'RESOLVED'] };
     else if (filter === 'mine') Object.assign(where, { status: 'ANALYST', assignedAnalystId: user.id });
-    if (q) where.OR = [{ user: { name: { contains: q } } }, { user: { department: { contains: q } } }, { handoffTicket: { contains: q } }];
+    if (q) where.OR = [{ user: { name: { contains: q, mode: 'insensitive' } } }, { user: { department: { contains: q, mode: 'insensitive' } } }, { handoffTicket: { contains: q, mode: 'insensitive' } }];
 
     const [rows, needs, agent, mine, all] = await Promise.all([
       db.conversation.findMany({

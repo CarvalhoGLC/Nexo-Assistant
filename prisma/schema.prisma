@@ -3,12 +3,12 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
-// SQLite não possui enum nativo no Prisma: os valores controlados ficam como String
-// no banco e são tipados em lib/types.ts.
+// Valores controlados (status, prioridade, papéis...) ficam como String no banco e são tipados em lib/types.ts.
+// Postgres em todos os ambientes (local, teste e produção) para não haver diferença de comportamento.
 
 model User {
   id            String         @id @default(cuid())

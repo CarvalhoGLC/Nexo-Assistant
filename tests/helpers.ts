@@ -5,9 +5,12 @@ import type { ActionCtx, TurnState } from '@/agent/actions';
 
 export const daysAgo = (n: number) => new Date(Date.now() - n * 86400_000);
 
+/** Limpa todas as tabelas em uma única transação. */
 export async function resetDb() {
-  await db.message.deleteMany(); await db.draft.deleteMany(); await db.conversation.deleteMany();
-  await db.session.deleteMany(); await db.ticket.deleteMany(); await db.helpArticle.deleteMany(); await db.user.deleteMany();
+  await db.$transaction([
+    db.message.deleteMany(), db.draft.deleteMany(), db.conversation.deleteMany(),
+    db.session.deleteMany(), db.ticket.deleteMany(), db.helpArticle.deleteMany(), db.user.deleteMany(),
+  ]);
 }
 
 export async function mkUser(name: string, role: 'EMPLOYEE' | 'ANALYST' = 'EMPLOYEE') {
