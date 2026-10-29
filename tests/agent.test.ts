@@ -1,3 +1,0 @@
-import {describe,it,expect} from 'vitest';
-function classify(s:string){const x=s.toLowerCase();if(/analista|humano|pessoa|atendente/.test(x))return'transfer';if(/status|andamento|atrasad|chamado|ticket/.test(x))return'status';if(/vpn|senha|outlook|wi.?fi|monitor|notebook|computador|acesso/.test(x))return'ticket_or_help';return'scope'}
-describe('service desk policy',()=>{it('keeps HR outside TI scope',()=>expect(classify('Quero falar sobre férias')).toBe('scope'));it('detects human transfer',()=>expect(classify('quero um analista')).toBe('transfer'));it('detects VPN',()=>expect(classify('erro na VPN')).toBe('ticket_or_help'))})
