@@ -10,3 +10,22 @@ export function loginRateLimited(key: string, max = 8, windowMs = 60_000): boole
   attempts.set(key, recent);
   return recent.length > max;
 }
+
+/** Tetos diários (dia UTC) de mensagens que acionam o agent. Protegem o custo do modelo mesmo se alguém abrir várias sessões. */
+export const dailyLimitPerUser = (): number => Number(process.env.DAILY_MESSAGES_PER_USER ?? 100);
+export const dailyLimitGlobal = (): number => Number(process.env.DAILY_MESSAGES_GLOBAL ?? 1000);
+
+export const startOfUtcDay = (d: Date = new Date()): Date => new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+
+/** Retorna a mensagem de erro (429) se algum teto diário foi atingido; null se pode seguir. */
+export async function dailyLimitError(userId: string): Promise<string | null> {
+  const { db } = await import('./db');
+  const since = startOfUtcDay();
+  const [mine, all] = await Promise.all([
+    db.message.count({ where: { sender: 'USER', createdAt: { gte: since }, conversation: { userId } } }),
+    db.message.count({ where: { sender: 'USER', createdAt: { gte: since } } }),
+  ]);
+  if (all >= dailyLimitGlobal()) return 'O serviço atingiu o limite diário de uso. Tente novamente amanhã ou procure o service desk no ramal 4000.';
+  if (mine >= dailyLimitPerUser()) return `Você atingiu o limite de ${dailyLimitPerUser()} mensagens por dia. Tente novamente amanhã ou procure o service desk no ramal 4000.`;
+  return null;
+}

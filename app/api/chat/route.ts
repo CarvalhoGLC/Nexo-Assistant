@@ -4,7 +4,7 @@ import { runAgent, type HistoryItem } from '@/agent';
 import { requireSession } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { handleError, HttpError } from '@/lib/http';
-import { maxMessageChars, maxMessagesPerSession } from '@/lib/limits';
+import { dailyLimitError, maxMessageChars, maxMessagesPerSession } from '@/lib/limits';
 import type { ChatEvent, ConversationStatus, SessionInfo } from '@/lib/types';
 import { addMessage, conversationForUser, toMessageDTOs } from '@/services/conversation-service';
 
@@ -47,6 +47,9 @@ export async function POST(req: Request) {
 
     const max = maxMessagesPerSession();
     if (session.messageCount >= max) throw new HttpError(429, `Limite de ${max} mensagens por sessão atingido. Saia e entre de novo para continuar.`);
+
+    const daily = await dailyLimitError(user.id);
+    if (daily) throw new HttpError(429, daily);
 
     let conv = await conversationForUser(user.id);
     if (conv.status === 'CLOSED' || conv.status === 'RESOLVED') conv = await db.conversation.update({ where: { id: conv.id }, data: { status: 'AGENT' } });
