@@ -4,12 +4,14 @@ Agent de atendimento do service desk de TI da Nexo: o funcionário descreve o pr
 
 ## Como rodar
 
+Requer Node 20.9+ e um Postgres local (Docker: `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16`; ou `createdb nexo_dev nexo_test`).
+
 ```bash
 npm install
 cp .env.example .env      # preencha OPENAI_API_KEY e SESSION_SECRET (openssl rand -hex 32)
-npm run db:reset          # cria o SQLite e carrega os dados de exemplo
+npm run db:reset          # recria as tabelas e carrega os dados de exemplo (só roda contra banco local)
 npm run dev               # http://localhost:3000
-npm test                  # testes (usam um SQLite separado, test.db)
+npm test                  # testes de integração num banco DEDICADO (TEST_DATABASE_URL, nome com "test")
 npm run typecheck
 ```
 
@@ -24,14 +26,14 @@ components/     DecisionSteps (transparência), cards, rascunho, opções rápid
 agent/          Mastra: instructions.ts (política), tools.ts (schemas), actions.ts (regras + registro das decisões)
 services/       tickets, central de ajuda, conversas/transferência, rascunhos, sistema legado (retry)
 lib/            sessão assinada, senha (scrypt), SLA, prioridade, tipos compartilhados
-prisma/         schema SQLite + seed
+prisma/         schema Postgres + seed
 ```
 
 Decisões principais:
 - **O modelo decide a ação; o código garante a regra.** Prioridade (impacto × urgência), prazos em horas/dias úteis, duplicidade, janela de 7 dias para reabrir, limite de mensagens e "só cria depois de confirmar" ficam em código testado, não no prompt.
 - **A identidade vem da sessão.** O cookie é `id.hmac` e só aponta para uma sessão no banco. Nenhuma rota nem ferramenta aceita `userId` do cliente ou do modelo; `/api/conversations`, `/api/analyst` exigem papel ANALYST.
 - **Confirmação no servidor.** `proposeDraft` grava um rascunho; o chamado só nasce em `POST /api/chat/draft` (botão Confirmar), com os dados do rascunho gravado, nunca do cliente.
-- **Persistência:** SQLite/Prisma guarda usuários, sessões, conversas, mensagens (com os passos de decisão), rascunhos e chamados. O estado "com o agent / aguardando / com analista" sobrevive a reinício.
+- **Persistência:** Postgres/Prisma guarda usuários, sessões, conversas, mensagens (com os passos de decisão), rascunhos e chamados. O estado "com o agent / aguardando / com analista" sobrevive a reinício.
 - **Sistema legado instável:** chamadas passam por `legacy()` (retry com backoff, falha simulada via `TICKETS_FAILURE_RATE`). Se continuar fora, o passo aparece como falha e o agent oferece tentar de novo ou chamar um analista; confirmar um rascunho com o legado fora mantém o rascunho.
 
 ## Como o agent decide o que fazer
@@ -55,15 +57,30 @@ Seguem o `nexo.pen`: login em dois painéis, chat (rascunho com Confirmar/Editar
 ## Trade-offs
 
 - Busca da central de ajuda por palavras-chave: suficiente para ~10 artigos; com mais artigos, embeddings.
-- SQLite: simples e persistente, mas serve a uma instância; em produção, Postgres (troca de `provider` no schema).
+- Postgres em todos os ambientes (local, teste e produção): evita diferença de comportamento entre bancos. Custo: exige um Postgres para rodar localmente.
 - Uma conversa contínua por funcionário (permite voltar outro dia). Polling a cada 4–5 s no lugar de WebSocket para o analista/funcionário.
 - Horário útil usa o fuso do servidor e não considera feriados.
 - O login limita tentativas em memória (por instância).
 
 ## Com mais tempo
 
-Evals automáticos do agent (conversas-modelo com ação esperada), tracing, WebSocket/SSE para o console, feriados no SLA, Postgres, rate limit distribuído, testes de interface.
+Evals automáticos do agent (conversas-modelo com ação esperada), tracing, WebSocket/SSE para o console, feriados no SLA, rate limit de login distribuído (hoje é em memória por instância), testes de interface.
 
-## Deploy (diferencial)
+## Deploy (diferencial): Vercel + Postgres (Neon)
 
-Plataforma com disco persistente ou Postgres (Railway/Fly.io). Defina `SESSION_SECRET`, a chave do provedor, `MAX_MESSAGES_PER_SESSION` e `DATABASE_URL`; o cookie já usa `secure` em produção. Limite o gasto no painel do provedor do modelo.
+1. **Banco:** em *Storage* do projeto na Vercel, crie um Postgres (Neon) e conecte ao projeto; a Vercel preenche `DATABASE_URL`. A Vercel não guarda arquivos entre requisições, por isso não dá para usar SQLite lá.
+2. **Variáveis de ambiente** (Settings → Environment Variables): `SESSION_SECRET` (obrigatório em produção; o app recusa iniciar sem ele), `OPENAI_API_KEY`, `MODEL`, e opcionalmente os limites abaixo.
+3. **Tabelas e dados de exemplo** (uma vez, da sua máquina, com a `DATABASE_URL` de produção): `DATABASE_URL="<url de produção>" npm run db:setup`. Esse comando **não apaga nada**; `db:reset` recusa rodar contra banco que não seja local.
+4. **Deploy:** push na branch `master`. O build roda `prisma generate && next build`.
+
+Como o uso é limitado (a URL é pública e o login aceita qualquer senha, por decisão de protótipo):
+
+| Limite | Padrão | Variável |
+| --- | --- | --- |
+| Mensagens por sessão | 30 | `MAX_MESSAGES_PER_SESSION` |
+| Mensagens por usuário por dia (UTC) | 100 | `DAILY_MESSAGES_PER_USER` |
+| Mensagens no serviço inteiro por dia (UTC) | 1000 | `DAILY_MESSAGES_GLOBAL` |
+| Tamanho da mensagem | 1000 caracteres | `MAX_USER_MESSAGE_CHARS` |
+| Passos do modelo por mensagem / saída | 6 / 700 tokens | `agent/index.ts` |
+
+O teto global limita o pior caso de custo: no máximo ~1000 chamadas ao modelo por dia, cada uma com saída limitada. Defina também um limite de gasto no painel do provedor do modelo. Chaves ficam só nas variáveis da Vercel, nunca no código nem no repositório. As mensagens de demonstração do seed contam no teto do dia em que foram criadas.
